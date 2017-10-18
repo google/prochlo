@@ -84,12 +84,9 @@ class BucketDistributor {
   // updated to pop them.
   void FillChunksFromStash();
 
-  // This assigns a target output bucket to each item in an incoming bucket. It
-  // does that by randomly shuffling an array of bucket indices (one for each
-  // item in the incoming bucket) and target-bucket separators. After the
-  // shuffle, it scans the array and associates a target bucket ID with every
-  // incoming item. Note that no actual items are moved around in memory during
-  // this shuffle.
+  // This assigns a random target output bucket to each item in an incoming
+  // bucket.  Note that no actual items are moved around in memory during this
+  // shuffle.
   void AssignBucketTargets(size_t bucket_size);
 
   // This method determines where an input item will be placed after
@@ -132,7 +129,6 @@ class BucketDistributor {
   typedef std::vector<PlainIntermediateShufflerItem> Chunk;
   typedef std::vector<Chunk> OutputBuffer;
   typedef std::vector<size_t> OutputBufferSizes;
-  typedef std::vector<size_t> ShuffleArray;
   typedef std::vector<size_t> InputBufferTargets;
 
   const size_t number_of_items_;
@@ -147,11 +143,6 @@ class BucketDistributor {
   Stash stash_;
   OutputBuffer output_;
   OutputBufferSizes output_sizes_;
-
-  // We use this array to shuffle the indices of items in an incoming buffer,
-  // along with bucket boundaries, so as to randomly distribute them among the
-  // output buckets.
-  ShuffleArray shuffle_array_;
 
   // We store in this array the destination bucket for each item in an incoming
   // bucket.
