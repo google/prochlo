@@ -277,6 +277,14 @@ bool ShuffleCrypter::DecryptIntermediateShufflerItem(
   return true;
 }
 
+// static
+size_t ShuffleCrypter::RandomSizeT(size_t limit) {
+  size_t value = 0;
+  RAND_bytes(reinterpret_cast<uint8_t*>(&value), sizeof(size_t));
+  return value % limit;
+}
+
+
 };  // namespace crypto
 };  // namespace shuffler
 };  // namespace prochlo
