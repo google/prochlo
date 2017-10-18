@@ -79,13 +79,37 @@ class Stash {
   // size and heap use.
   size_t MemoryUse() const { return internal_size_; }
 
+  // Check the consistency of the stash. Return true if the sum of the sizes of
+  // all buckets' linked lists is equal to the number of allocated items, and if
+  // the number of allocated items plus the size of the free list is equal to
+  // the stash capacity.
+  //
+  // This is a debugging function, and has considerable cost (linear in the
+  // capacity of the stash).
+  bool IsConsistent() const;
+
+  // Calculate the size of a linked list, terminated with a |size_|.
+  size_t CalculateListSize(size_t start) const;
+
+  // Print out diagnostics
+  void PrintDiagnostics() const;
+
  private:
   std::vector<unsigned int> chunk_starts_;
   std::vector<StashItem> stash_items_;
-  size_t size_;  // The number of items in the stash.
-  size_t free_;  // The first item in the free list.
-  size_t internal_size_;
-  size_t allocated_;  // The number of allocated items.
+
+  // The maximum number of items in the stash, i.e., its capacity across all
+  // buckets. |size_| is also used to terminate linked lists.
+  const size_t size_;
+
+  // The first item in the free list, or |size_| if there is no free item.
+  size_t free_;
+
+  // An estimate of the number of bytes used by the stash.
+  const size_t internal_size_;
+
+  // The number of currently allocated items. Should be between 0 and |size_|.
+  size_t allocated_;
 };
 
 };  // namespace stash
