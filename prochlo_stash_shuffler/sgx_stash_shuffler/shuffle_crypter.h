@@ -63,6 +63,9 @@ class ShuffleCrypter {
       const IntermediateShufflerItem& intermediate_shuffler_item,
       PlainIntermediateShufflerItem* plain_intermediate_shuffler_item);
 
+  // Returns a random size_t value in the range [0, limit).
+  static size_t RandomSizeT(size_t limit);
+
  private:
   // Loads a private EVP PKEY from a PEM-formatted string and returns it. It
   // aborts on error.
