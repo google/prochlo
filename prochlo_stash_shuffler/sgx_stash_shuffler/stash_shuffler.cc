@@ -65,7 +65,7 @@ PlainShufflerItem* BucketDistributor::FindPlainShufflerItemSlot(
     output_sizes_[target_bucket]++;
   } else if (!stash_.IsFull()) {
     size_t allocated_slot_index = stash_.AllocateFront(target_bucket);
-    log_printf(LOG_PEDANTIC,
+    log_printf(LOG_INFO,
                "Item %lu"
                " from this bucket will be imported into the stash for target "
                "bucket %lu"
@@ -169,43 +169,16 @@ void BucketDistributor::ExportOutput(
 void BucketDistributor::AssignBucketTargets(size_t bucket_size) {
   log_printf(LOG_WORDY, "Assigning targets to bucket of size %lu.\n",
              bucket_size);
-  // Prepare shuffle array
-  for (size_t i = 0; i < bucket_size; i++) {
-    shuffle_array_[i] = i;
-    log_printf(LOG_PEDANTIC,
-               "Preparing shuffle array [%lu"
-               "] -> %lu.\n",
-               i, i);
-  }
-  for (size_t i = bucket_size; i < bucket_size + number_of_buckets_ - 1; i++) {
-    shuffle_array_[i] =
-        max_bucket_size_;  // This is used as the boundary marker,
-                           // since it cannot be a valid index.
-    log_printf(LOG_PEDANTIC, "Preparing shuffle array [%lu] -> %lu.\n", i,
-               max_bucket_size_);
-  }
-
-  crypter_->ShuffleIndexArray(&shuffle_array_,
-                              bucket_size + number_of_buckets_ - 1);
+  CHECK_LE(bucket_size, max_bucket_size_);
 
   // Now scan over the shuffled buffer and assign targets to input items.
-  size_t current_target = 0;
-  ShuffleArray::iterator begin = shuffle_array_.begin();
-  ShuffleArray::iterator end = begin + bucket_size + number_of_buckets_ - 1;
-  for (ShuffleArray::iterator it = begin; it != end; it++) {
-    size_t index = *it;
-    if (index == max_bucket_size_) {
-      current_target++;
-    } else {
-      CHECK_GT(bucket_size, index);
-      CHECK_GT(number_of_buckets_, current_target);
-      input_buffer_targets_[index] = current_target;
-      log_printf(LOG_PEDANTIC,
-                 "Input item %lu"
-                 " will be sent to target bucket %lu.\n",
-                 index, current_target);
-    }
+  for (size_t index = 0; index < bucket_size; index++) {
+    size_t target_bucket = ShuffleCrypter::RandomSizeT(number_of_buckets_);
+    log_printf(LOG_PEDANTIC, "Sending item %d to bucket %d.\n", index,
+               target_bucket);
+    input_buffer_targets_[index] = target_bucket;
   }
+
   log_printf(LOG_WORDY, "Done with target assignment.\n");
 }
 
@@ -220,7 +193,6 @@ bool BucketDistributor::DistributeBucket(
     return false;
   }
   ExportOutput(input_bucket, intermediate_array);
-
   return true;
 }
 
@@ -300,7 +272,6 @@ BucketDistributor::BucketDistributor(size_t number_of_items,
       output_(number_of_buckets_,
               Chunk(chunk_size_, PlainIntermediateShufflerItem())),
       output_sizes_(number_of_buckets_, 0),
-      shuffle_array_(max_bucket_size_ + number_of_buckets_ - 1, 0),
       input_buffer_targets_(max_bucket_size_, number_of_buckets_),
       crypter_(crypter) {
   log_printf(LOG_INFO, "Created a BucketDistributor and it has size %d.\n",
@@ -341,10 +312,6 @@ BucketDistributor::BucketDistributor(size_t number_of_items,
   increment = output_sizes_.size() * sizeof(size_t);
   internal_size_ += increment;
   log_printf(LOG_INFO, "Output size array size is %lu.\n", increment);
-
-  increment = shuffle_array_.size() * sizeof(size_t);
-  internal_size_ += increment;
-  log_printf(LOG_INFO, "Shuffle array size is %lu.\n", increment);
 
   increment = input_buffer_targets_.size() * sizeof(size_t);
   internal_size_ += increment;
