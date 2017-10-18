@@ -14,6 +14,7 @@
 
 #include "stash_stash.h"
 #include "Enclave.h"
+#include <cmath>
 
 namespace prochlo {
 namespace shuffler {
@@ -26,19 +27,24 @@ Stash::Stash(size_t size, size_t number_of_queues)
       stash_items_(size),
       size_(size),
       free_(0),
-      allocated_(0) {
-  CHECK_LT(0, size);  // Can't have a stash of capacity 0.
-
+      allocated_(0),
+      internal_size_(sizeof(Stash) +  // intrinsic object size
+                     // chunk_starts_
+                     sizeof(chunk_starts_) +
+                     chunk_starts_.size() * sizeof(unsigned int) +
+                     // stash_items_
+                     sizeof(stash_items_) +
+                     stash_items_.size() * sizeof(StashItem) +
+                     // primitives
+                     sizeof(size_) +
+                     sizeof(free_) +
+                     sizeof(internal_size_) +
+                     sizeof(allocated_)) {
   for (size_t i = 0; i < size; i++) {
     stash_items_[i].next = i + 1;  // the size of the stash is the 'bottom'
                                    // value, the equivalent of nullptr.
   }
 
-  internal_size_ = sizeof(Stash);
-  internal_size_ += chunk_starts_.size() * sizeof(int);       // chunk_starts_
-                                                              // contents
-  internal_size_ += stash_items_.size() * sizeof(StashItem);  // stash_items_
-                                                              // contents
   log_printf(
       LOG_INFO,
       "Created a stash of size %d elements, split across %d queues, with "
@@ -114,6 +120,101 @@ size_t Stash::Allocated() const { return allocated_; }
 PlainShufflerItem& Stash::operator[](size_t pos) {
   CHECK_GT(size_, pos);
   return stash_items_[pos].plain_shuffler_item;
+}
+
+
+size_t Stash::CalculateListSize(size_t start) const {
+  size_t current = start;
+  size_t list_size = 0;
+  while (current != size_) {
+    // Make sure the current pointer is valid
+    CHECK_LE(0, current);
+    CHECK_LE(current, size_);
+
+    // Increment the count and proceed to the next item
+    list_size++;
+    current = stash_items_[current].next;
+  }
+  return list_size;
+}
+
+void Stash::PrintDiagnostics() const {
+  size_t min = size_;
+  size_t argmin = 0;
+  size_t max = 0;
+  size_t argmax = 0;
+  const double mean = static_cast<double>(allocated_) / chunk_starts_.size();
+  double sum_of_squared_deviations = 0;
+
+  for (size_t index = 0; index < chunk_starts_.size(); index++) {
+    size_t list_size = CalculateListSize(chunk_starts_[index]);
+
+    if (list_size < min) {
+      min = list_size;
+      argmin = index;
+    }
+    if (list_size > max) {
+      max = list_size;
+      argmax = index;
+    }
+
+    size_t deviation = list_size - mean;
+    double squared_deviation = deviation * deviation;
+    sum_of_squared_deviations += squared_deviation;
+  }
+  double standard_deviation =
+      std::sqrt(sum_of_squared_deviations / chunk_starts_.size());
+
+  log_printf(LOG_INFO, "Stash statistics: %d/%d, %d@%d, %d@%d, %f, %f\n",
+             allocated_, size_, min, argmin, max, argmax, mean, standard_deviation);
+}
+
+bool Stash::IsConsistent() const {
+  size_t sum_of_list_sizes = 0;
+  for (std::vector<unsigned int>::const_iterator start = chunk_starts_.begin();
+       start != chunk_starts_.end(); start++) {
+    size_t list_size = 0;
+    size_t current = *start;
+    while (current != size_) {
+      // Make sure the current pointer is valid
+      CHECK_LE(0, current);
+      CHECK_LE(current, size_);
+
+      // Increment the count and proceed to the next item
+      list_size++;
+      current = stash_items_[current].next;
+    }
+    sum_of_list_sizes += list_size;
+  }
+  if (sum_of_list_sizes != allocated_) {
+    log_printf(
+        LOG_ERROR,
+        "The sum of the stash linked lists is %d and the number of "
+        "allocated items is %d, but the two should be equal!\n",
+        sum_of_list_sizes, allocated_);
+    return false;
+  }
+
+  size_t free_size = 0;
+  size_t current = free_;
+  while (current != size_) {
+    // Make sure the current pointer is valid
+    CHECK_LE(0, current);
+    CHECK_LE(current, size_);
+
+    // Increment the count and proceed to the next item
+    free_size++;
+    current = stash_items_[current].next;
+  }
+  if (allocated_ + free_size != size_) {
+    log_printf(
+        LOG_ERROR,
+        "The size of the free list is %d, but that is different from "
+        "the difference between capacity and allocated size %d.\n",
+        free_size, size_ - allocated_);
+    return false;
+  }
+  return true;
 }
 
 };  // namespace stash
