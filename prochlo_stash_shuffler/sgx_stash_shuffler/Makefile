@@ -6,8 +6,6 @@ APPS = stash_shuffle stash_clean_up stash_distribute
 AR = ar
 RANLIB = ranlib
 
-
-
 CXXFLAGS += $(App_Cpp_Flags)
 LDFLAGS += $(App_Link_Flags)
 SHUFFLER_OBJS = untrusted/stash_shuffler_u.o
@@ -31,5 +29,5 @@ stash_clean_up: untrusted/stash_clean_up.o untrusted/Enclave_u.o
 stash_distribute: untrusted/stash_distribute.o untrusted/Enclave_u.o
 	$(CXX) $(CXXFLAGS)  untrusted/stash_distribute.o untrusted/Enclave_u.o  -o $@ $(LDFLAGS)
 
--include *.d untrusted/*.d
 include ../third_party/intel/sgxsdk/Makefile.inc
+-include *.d untrusted/*.d

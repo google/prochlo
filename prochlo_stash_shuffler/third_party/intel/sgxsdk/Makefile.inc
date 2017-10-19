@@ -92,17 +92,13 @@ else
 endif
 
 App_Cpp_Flags := $(App_C_Flags) -std=c++11
-App_Link_Flags := $(SGX_COMMON_CFLAGS) -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -lpthread -L$(SGX_SSL_LIBRARY_PATH) -lsgx_usgxssl
+App_Link_Flags := $(SGX_COMMON_CFLAGS) -L$(SGX_LIBRARY_PATH) -Xlinker -R -Xlinker $(SGX_LIBRARY_PATH) -l$(Urts_Library_Name) -lpthread -L$(SGX_SSL_LIBRARY_PATH) -lsgx_usgxssl
 
 ifneq ($(SGX_MODE), HW)
 	App_Link_Flags += -lsgx_uae_service_sim
 else
 	App_Link_Flags += -lsgx_uae_service
 endif
-
-App_Cpp_Objects := $(App_Cpp_Files:.cpp=.o)
-
-App_Name := app
 
 ######## Enclave Settings ########
 
@@ -152,19 +148,13 @@ endif
 ifeq ($(Build_Mode), HW_RELEASE)
 enclave: $(Enclave_Name)
 	@echo "The project has been built in release hardware mode."
-	@echo "Please sign the $(Enclave_Name) first with your signing key before you run the $(App_Name) to launch and access the enclave."
+	@echo "Please sign the $(Enclave_Name) first with your signing key before you run the application to launch and access the enclave."
 	@echo "To sign the enclave use the command:"
 	@echo "   $(SGX_ENCLAVE_SIGNER) sign -key <your key> -enclave $(Enclave_Name) -out <$(Signed_Enclave_Name)> -config $(Enclave_Config_File)"
 	@echo "You can also sign the enclave using an external signing tool. See User's Guide for more details."
 	@echo "To build the project in simulation mode set SGX_MODE=SIM. To build the project in prerelease mode set SGX_PRERELEASE=1 and SGX_MODE=HW."
 else
 enclave: $(Signed_Enclave_Name)
-endif
-
-run: all
-ifneq ($(Build_Mode), HW_RELEASE)
-	@$(CURDIR)/$(App_Name)
-	@echo "RUN  =>  $(App_Name) [$(SGX_MODE)|$(SGX_ARCH), OK]"
 endif
 
 ######## App Objects ########
@@ -200,4 +190,4 @@ $(Signed_Enclave_Name): $(Enclave_Name) $(Enclave_Config_File)
 	@echo "SIGN =>  $@"
 
 sgx_clean:
-	rm -f $(App_Name) $(Enclave_Name) $(Signed_Enclave_Name) $(App_Cpp_Objects) untrusted/Enclave_u.* $(Enclave_Cpp_Objects) Enclave_t.*
+	rm -f $(Enclave_Name) $(Signed_Enclave_Name) untrusted/Enclave_u.* $(Enclave_Cpp_Objects) Enclave_t.*
