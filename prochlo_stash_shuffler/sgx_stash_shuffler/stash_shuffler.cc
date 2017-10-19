@@ -65,7 +65,7 @@ PlainShufflerItem* BucketDistributor::FindPlainShufflerItemSlot(
     output_sizes_[target_bucket]++;
   } else if (!stash_.IsFull()) {
     size_t allocated_slot_index = stash_.AllocateFront(target_bucket);
-    log_printf(LOG_INFO,
+    log_printf(LOG_PEDANTIC,
                "Item %lu"
                " from this bucket will be imported into the stash for target "
                "bucket %lu"
