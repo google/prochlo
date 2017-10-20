@@ -19,6 +19,7 @@
 #include <memory>
 #include <vector>
 
+#include "append_only_allocator.h"
 #include "shuffle_crypter.h"
 #include "shuffle_data.h"
 #include "stash_stash.h"
@@ -36,7 +37,8 @@ class BucketDistributor {
  public:
   BucketDistributor(size_t number_of_items, size_t number_of_buckets,
                     size_t chunk_size, size_t stash_size, size_t stash_chunks,
-                    crypto::ShuffleCrypter* const crypter);
+                    crypto::ShuffleCrypter* const crypter,
+                    AppendOnlyByteRegion* region);
 
   // Distribute an array of encrypted items. |shuffler_items| may not be NULL,
   // and points to an array of items that is at least |number_of_items_|
@@ -49,7 +51,7 @@ class BucketDistributor {
 
   // The (logical) running memory use of the BucketDistributor, in bytes. It
   // includes static size and heap use.
-  size_t MemoryUse() const { return internal_size_; }
+  const size_t MemoryUse() const { return internal_size_; }
 
  private:
   // Read in a single bucket of encrypted items from the input, representing
@@ -126,10 +128,12 @@ class BucketDistributor {
   void ExportOutput(size_t input_bucket,
                     IntermediateShufflerItem* intermediate_array);
 
-  typedef std::vector<PlainIntermediateShufflerItem> Chunk;
-  typedef std::vector<Chunk> OutputBuffer;
-  typedef std::vector<size_t> OutputBufferSizes;
-  typedef std::vector<size_t> InputBufferTargets;
+  typedef std::vector<PlainIntermediateShufflerItem,
+                      AppendOnlyAllocator<PlainIntermediateShufflerItem>>
+      Chunk;
+  typedef std::vector<Chunk, AppendOnlyAllocator<Chunk>> OutputBuffer;
+  typedef std::vector<size_t, AppendOnlyAllocator<size_t>> OutputBufferSizes;
+  typedef std::vector<size_t, AppendOnlyAllocator<size_t>> InputBufferTargets;
 
   const size_t number_of_items_;
   const size_t number_of_buckets_;
@@ -141,6 +145,11 @@ class BucketDistributor {
   const size_t max_bucket_size_;
   const size_t intermediate_bucket_size_;
   Stash stash_;
+
+  AppendOnlyAllocator<size_t> size_t_allocator_;
+  AppendOnlyAllocator<Chunk> chunk_allocator_;
+  AppendOnlyAllocator<PlainIntermediateShufflerItem> pisi_allocator_;
+
   OutputBuffer output_;
   OutputBufferSizes output_sizes_;
 
@@ -148,7 +157,8 @@ class BucketDistributor {
   // bucket.
   InputBufferTargets input_buffer_targets_;
 
-  size_t internal_size_;
+  // An estimate of the object's memory consumption
+  const size_t internal_size_;
 
   crypto::ShuffleCrypter* crypter_;
 };
@@ -175,7 +185,7 @@ class CleanerUpper {
  public:
   CleanerUpper(size_t number_of_items, size_t number_of_buckets,
                size_t chunk_size, size_t stash_chunks, size_t clean_up_window,
-               crypto::ShuffleCrypter* crypter);
+               crypto::ShuffleCrypter* crypter, AppendOnlyByteRegion* region);
 
   // Cleans up an array of encrypted intermediate items and stores it in an
   // array of decrypted items. Neither |intermediate_array| nor
@@ -188,11 +198,13 @@ class CleanerUpper {
 
   // The (logical) running memory use of the CleanerUpper, in bytes. It includes
   // static size and heap use.
-  size_t MemoryUse() const { return internal_size_; }
+  const size_t MemoryUse() const { return internal_size_; }
 
  private:
-  typedef std::vector<size_t> ShuffleArray;
-  typedef std::vector<size_t> DrainQueue;
+  typedef std::vector<size_t, AppendOnlyAllocator<size_t>> ShuffleArray;
+  typedef std::vector<size_t, AppendOnlyAllocator<size_t>> DrainQueue;
+
+  AppendOnlyAllocator<size_t> size_t_allocator_;
 
   const size_t number_of_items_;
   const size_t number_of_buckets_;
@@ -225,7 +237,9 @@ class CleanerUpper {
   DrainQueue drain_queue_;
   size_t drain_add_;
   size_t drain_next_;
-  size_t internal_size_;
+
+  // An estimate of the object's memory consumption
+  const size_t internal_size_;
 
   // Imports an intermediate bucket. It reads each encrypted intermediate item
   // into internal memory. It decrypts the item into the Window, at a newly
@@ -256,7 +270,8 @@ class StashShuffler {
                const size_t stash_chunks, const size_t clean_up_window,
                AnalyzerItem* const analyzer_items,
                IntermediateShufflerItem* const encrypted_intermediate_items,
-               size_t number_of_intermediate_shuffler_items);
+               size_t number_of_intermediate_shuffler_items,
+               AppendOnlyByteRegion* region);
 
  private:
   std::unique_ptr<crypto::ShuffleCrypter> crypter_;

@@ -151,8 +151,8 @@ void ShuffleCrypter::DeriveSecretSymmetricKey(EVP_PKEY* local_key,
   EVP_PKEY_CTX_free(ctx);
 }
 
-void ShuffleCrypter::ShuffleIndexArray(std::vector<size_t>* array,
-                                       size_t length) {
+void ShuffleCrypter::ShuffleIndexArray(
+    std::vector<size_t, AppendOnlyAllocator<size_t>>* array, size_t length) {
   // This was adapted from std::random_shuffle in stlport, the C++ standard
   // library used by the SGX SDK originally. The current library (libtcxx)
   // doesn't support std::random_shuffle or std::shuffle at all.

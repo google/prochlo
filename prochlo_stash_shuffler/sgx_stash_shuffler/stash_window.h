@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "append_only_allocator.h"
 #include "shuffle_data.h"
 
 namespace prochlo {
@@ -41,7 +42,7 @@ class Window {
  public:
   // Create the arena of window items, all of which belong in the free list. The
   // window will contain |size| items.
-  Window(size_t size);
+  Window(size_t size, AppendOnlyByteRegion* region);
 
   // Allocate a window item. Returns the index of the newly allocated item, and
   // updates the free list. The window must not be full.
@@ -72,8 +73,14 @@ class Window {
   size_t MemoryUse() const { return internal_size_; }
 
  private:
-  std::vector<bool> is_allocated_;
-  std::vector<WindowItem> window_items_;
+  AppendOnlyAllocator<uint8_t> uint8_allocator_;
+  AppendOnlyAllocator<WindowItem> window_item_allocator_;
+
+  // Using uint8_t instead of bool as the type of is_allocated_, because the
+  // std::vector specialization for bool make it hard to use a simple custom
+  // allocator.
+  std::vector<uint8_t, AppendOnlyAllocator<uint8_t>> is_allocated_;
+  std::vector<WindowItem, AppendOnlyAllocator<WindowItem>> window_items_;
   size_t size_;       // The number of items in the stash.
   size_t free_;       // The first item in the free list.
   size_t allocated_;  // The first allocated item.

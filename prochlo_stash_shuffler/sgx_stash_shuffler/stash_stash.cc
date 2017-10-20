@@ -12,34 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cmath>
+
+#include "append_only_allocator.h"
 #include "stash_stash.h"
 #include "Enclave.h"
-#include <cmath>
 
 namespace prochlo {
 namespace shuffler {
 namespace stash {
 
-Stash::Stash(size_t size, size_t number_of_queues)
-    : chunk_starts_(number_of_queues, size),  // All queues will start with
-                                              // |size|, which is our nullptr
-                                              // equivalent.
-      stash_items_(size),
+Stash::Stash(const size_t size, const size_t number_of_queues,
+             AppendOnlyByteRegion* region)
+    : uint_allocator_(region),
+      stash_item_allocator_(region),
+      // All queues will start with |size|, which is our nullptr equivalent.
+      stash_items_(size, StashItem(), stash_item_allocator_),
+      chunk_starts_(number_of_queues, size, uint_allocator_),
       size_(size),
       free_(0),
       allocated_(0),
-      internal_size_(sizeof(Stash) +  // intrinsic object size
-                     // chunk_starts_
-                     sizeof(chunk_starts_) +
-                     chunk_starts_.size() * sizeof(unsigned int) +
-                     // stash_items_
-                     sizeof(stash_items_) +
-                     stash_items_.size() * sizeof(StashItem) +
-                     // primitives
-                     sizeof(size_) +
-                     sizeof(free_) +
-                     sizeof(internal_size_) +
-                     sizeof(allocated_)) {
+      internal_size_(
+          sizeof(Stash) +  // intrinsic object size
+                           // chunk_starts_
+          sizeof(chunk_starts_) + chunk_starts_.size() * sizeof(unsigned int) +
+          // stash_items_
+          sizeof(stash_items_) + stash_items_.size() * sizeof(StashItem) +
+          // primitives
+          sizeof(size_) + sizeof(free_) + sizeof(internal_size_) +
+          sizeof(allocated_)) {
   for (size_t i = 0; i < size; i++) {
     stash_items_[i].next = i + 1;  // the size of the stash is the 'bottom'
                                    // value, the equivalent of nullptr.

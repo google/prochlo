@@ -111,7 +111,6 @@ else
 endif
 Crypto_Library_Name := sgx_tcrypto
 
-Enclave_Cpp_Files :=  Enclave.cc shuffle_data.cc shuffle_crypter.cc stash_shuffler.cc stash_window.cc stash_stash.cc
 Enclave_Include_Paths := -I. -I$(SGX_SDK)/include -I$(SGX_SDK)/include/tlibc -I$(SGX_SDK)/include/libcxx -I$(SGX_SSL)/include/
 
 Enclave_C_Flags := -DENCLAVE $(SGX_COMMON_CFLAGS) -nostdinc -fvisibility=hidden -fpie -fstack-protector $(Enclave_Include_Paths)

@@ -10,6 +10,10 @@ CXXFLAGS += $(App_Cpp_Flags)
 LDFLAGS += $(App_Link_Flags)
 SHUFFLER_OBJS = untrusted/stash_shuffler_u.o
 
+Enclave_Cpp_Files :=  Enclave.cc shuffle_data.cc shuffle_crypter.cc \
+	 	      stash_shuffler.cc stash_window.cc stash_stash.cc \
+		      append_only_allocator.cc
+
 all: $(APPS) enclave
 
 clean: sgx_clean

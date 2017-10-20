@@ -18,8 +18,10 @@
 #include <random>
 #include <vector>
 
-#include "openssl/evp.h"
 #include "sgx_tcrypto.h"
+#include "openssl/evp.h"
+
+#include "append_only_allocator.h"
 #include "shuffle_data.h"
 
 namespace prochlo {
@@ -48,7 +50,8 @@ class ShuffleCrypter {
 
   // Shuffles the |length|-sized prefix of |array| in place. |array| may not be
   // NULL.
-  virtual void ShuffleIndexArray(std::vector<size_t>* array, size_t length);
+  virtual void ShuffleIndexArray(
+      std::vector<size_t, AppendOnlyAllocator<size_t>>* array, size_t length);
 
   virtual bool DecryptShufflerItem(const ShufflerItem& shuffler_item,
                                    PlainShufflerItem* plain_shuffler_item);

@@ -19,6 +19,7 @@
 
 #include "Enclave.h"
 #include "Enclave_t.h" /* print_string */
+#include "append_only_allocator.h"
 #include "stash_shuffler.h"
 
 void hexdump(const std::string& data) {
@@ -71,6 +72,8 @@ void ecall_set_key(const char* private_key_pem) {
   return;
 }
 
+constexpr size_t k_region_allocator_size = 88 * 1024 * 1024;  // 88MB
+
 void ecall_shuffle(void* shuffler_items, uint64_t number_of_items,
                    uint64_t number_of_buckets, uint64_t chunk_size,
                    uint64_t stash_size, uint64_t stash_chunks,
@@ -108,12 +111,15 @@ void ecall_shuffle(void* shuffler_items, uint64_t number_of_items,
              sizeof(prochlo::shuffler::AnalyzerItem),
              sizeof(prochlo::shuffler::IntermediateShufflerItem));
 
-  rc = stash_shuffler->Shuffle(local_shuffler_items, (size_t)number_of_items,
-                               (size_t)number_of_buckets, (size_t)chunk_size,
-                               (size_t)stash_size, (size_t)stash_chunks,
-                               (size_t)clean_up_window, local_analyzer_items,
-                               local_encrypted_intermediate_items,
-                               (size_t)number_of_intermediate_shuffler_items);
+  // Create the shuffle custom allocator.
+  auto region = std::unique_ptr<prochlo::AppendOnlyByteRegion>(
+      new prochlo::AppendOnlyByteRegion(k_region_allocator_size));
+  rc = stash_shuffler->Shuffle(
+      local_shuffler_items, (size_t)number_of_items, (size_t)number_of_buckets,
+      (size_t)chunk_size, (size_t)stash_size, (size_t)stash_chunks,
+      (size_t)clean_up_window, local_analyzer_items,
+      local_encrypted_intermediate_items,
+      (size_t)number_of_intermediate_shuffler_items, region.get());
 
   log_printf(LOG_INFO, "Enclave result: %u\n", rc);
 
@@ -135,10 +141,17 @@ void ecall_distribute(void* shuffler_items, uint64_t number_of_items,
   std::unique_ptr<prochlo::shuffler::crypto::ShuffleCrypter> crypter(
       new prochlo::shuffler::crypto::ShuffleCrypter(
           gPrivateKeyPem, reinterpret_cast<uint8_t*>(symmetric_key)));
-  std::unique_ptr<prochlo::shuffler::stash::BucketDistributor> distributor(
-      new prochlo::shuffler::stash::BucketDistributor(
+
+  // Create the shuffle custom allocator.
+  auto region = std::unique_ptr<prochlo::AppendOnlyByteRegion>(
+      new prochlo::AppendOnlyByteRegion(k_region_allocator_size));
+
+  uint8_t* distributor_memory =
+      region->Allocate(sizeof(prochlo::shuffler::stash::BucketDistributor));
+  auto distributor =
+      new (distributor_memory) prochlo::shuffler::stash::BucketDistributor(
           number_of_items, number_of_buckets, chunk_size, stash_size,
-          stash_chunks, crypter.get()));
+          stash_chunks, crypter.get(), region.get());
 
   if (!distributor->Distribute(
           reinterpret_cast<prochlo::shuffler::ShufflerItem*>(shuffler_items),
@@ -167,10 +180,16 @@ void ecall_clean_up(uint64_t number_of_items, uint64_t number_of_buckets,
       new prochlo::shuffler::crypto::ShuffleCrypter(
           gPrivateKeyPem, reinterpret_cast<uint8_t*>(symmetric_key)));
 
-  std::unique_ptr<prochlo::shuffler::stash::CleanerUpper> cleaner_upper(
-      new prochlo::shuffler::stash::CleanerUpper(
+  // Create the shuffle custom allocator.
+  auto region = std::unique_ptr<prochlo::AppendOnlyByteRegion>(
+      new prochlo::AppendOnlyByteRegion(k_region_allocator_size));
+
+  uint8_t* cleaner_upper_memory =
+      region->Allocate(sizeof(prochlo::shuffler::stash::CleanerUpper));
+  auto cleaner_upper =
+      new (cleaner_upper_memory) prochlo::shuffler::stash::CleanerUpper(
           number_of_items, number_of_buckets, chunk_size, stash_chunks,
-          clean_up_window, crypter.get()));
+          clean_up_window, crypter.get(), region.get());
 
   if (!cleaner_upper->CleanUp(
           reinterpret_cast<prochlo::shuffler::IntermediateShufflerItem*>(

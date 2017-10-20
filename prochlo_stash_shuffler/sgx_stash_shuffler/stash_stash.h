@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "append_only_allocator.h"
 #include "shuffle_data.h"
 
 namespace prochlo {
@@ -41,7 +42,7 @@ class Stash {
  public:
   // Create the arena of stash items, all of which belong in the free list. The
   // stash will contain |size| items and |number_of_queues| queues.
-  Stash(size_t size, size_t number_of_queues);
+  Stash(size_t size, size_t number_of_queues, AppendOnlyByteRegion* region);
 
   // Allocate a stash item to bucket |bucket|. Returns the index of the newly
   // allocated item, and updates the stack and free list. The stash must not be
@@ -95,8 +96,11 @@ class Stash {
   void PrintDiagnostics() const;
 
  private:
-  std::vector<unsigned int> chunk_starts_;
-  std::vector<StashItem> stash_items_;
+  AppendOnlyAllocator<unsigned int> uint_allocator_;
+  AppendOnlyAllocator<StashItem> stash_item_allocator_;
+
+  std::vector<unsigned int, AppendOnlyAllocator<unsigned int>> chunk_starts_;
+  std::vector<StashItem, AppendOnlyAllocator<StashItem>> stash_items_;
 
   // The maximum number of items in the stash, i.e., its capacity across all
   // buckets. |size_| is also used to terminate linked lists.

@@ -15,6 +15,7 @@
 #include "stash_shuffler.h"
 #include "shuffle_crypter.h"
 #include "stash_stash.h"
+#include "append_only_allocator.h"
 
 #include "Enclave.h"
 #include "Enclave_t.h"
@@ -258,7 +259,8 @@ BucketDistributor::BucketDistributor(size_t number_of_items,
                                      size_t number_of_buckets,
                                      size_t chunk_size, size_t stash_size,
                                      size_t stash_chunks,
-                                     crypto::ShuffleCrypter* crypter)
+                                     crypto::ShuffleCrypter* crypter,
+                                     AppendOnlyByteRegion* region)
     : number_of_items_(number_of_items),
       number_of_buckets_(number_of_buckets),
       chunk_size_(chunk_size),
@@ -268,21 +270,31 @@ BucketDistributor::BucketDistributor(size_t number_of_items,
           std::ceil((static_cast<float>(number_of_items) / number_of_buckets))),
       intermediate_bucket_size_((number_of_buckets_ + stash_chunks_) *
                                 chunk_size_),
-      stash_(stash_size_, number_of_buckets),
-      output_(number_of_buckets_,
-              Chunk(chunk_size_, PlainIntermediateShufflerItem())),
-      output_sizes_(number_of_buckets_, 0),
-      input_buffer_targets_(max_bucket_size_, number_of_buckets_),
-      crypter_(crypter) {
-  log_printf(LOG_INFO, "Created a BucketDistributor and it has size %d.\n",
-             sizeof(BucketDistributor));
-  size_t increment = sizeof(BucketDistributor);
-  internal_size_ = increment;
-  log_printf(LOG_INFO, "Inherent distributor size is %lu.\n", increment);
-
-  increment = stash_.MemoryUse();
-  internal_size_ += increment;
-
+      stash_(stash_size_, number_of_buckets, region),
+      size_t_allocator_(region),
+      chunk_allocator_(region),
+      pisi_allocator_(region),
+      output_(
+          number_of_buckets_,
+          Chunk(chunk_size_, PlainIntermediateShufflerItem(), pisi_allocator_),
+          chunk_allocator_),
+      output_sizes_(number_of_buckets_, 0, size_t_allocator_),
+      input_buffer_targets_(max_bucket_size_, number_of_buckets_,
+                            size_t_allocator_),
+      crypter_(crypter),
+      internal_size_(
+          // Inherent object memory size
+          sizeof(BucketDistributor) +
+          // Stash memory
+          stash_.MemoryUse() +
+          // output_ internal size
+          output_.size() *
+              (sizeof(Chunk) +
+               chunk_size_ * sizeof(PlainIntermediateShufflerItem)) +
+          // output_sizes_ size
+          output_sizes_.size() * sizeof(size_t) +
+          // input_buffer_targets_ size
+          input_buffer_targets_.size() * sizeof(size_t)) {
   printf(
       "Created bucket distributor for %lu"
       " items split into %lu"
@@ -295,38 +307,20 @@ BucketDistributor::BucketDistributor(size_t number_of_items,
       " items each, and there are %lu"
       " chunks devoted to draining the stash. Stash drainage can deal "
       "with at most %lu"
-      " stashed items.\n",
+      " stashed items. Total private memory use is %lu.\n",
       number_of_items, number_of_buckets, max_bucket_size_,
       intermediate_bucket_size_, intermediate_bucket_size_ * number_of_buckets,
       stash_size_, chunk_size_, stash_chunks_,
-      (chunk_size_ * stash_chunks_ * number_of_buckets_));
-
-  increment =
-      output_.size() *
-      (sizeof(Chunk) +
-       chunk_size_ * sizeof(PlainIntermediateShufflerItem));  // output_
-                                                              // internal
-                                                              // size
-  internal_size_ += increment;
-  log_printf(LOG_INFO, "Output buffer size is %lu.\n", increment);
-  increment = output_sizes_.size() * sizeof(size_t);
-  internal_size_ += increment;
-  log_printf(LOG_INFO, "Output size array size is %lu.\n", increment);
-
-  increment = input_buffer_targets_.size() * sizeof(size_t);
-  internal_size_ += increment;
-  printf(
-      "Input buffer targets size is %lu. "
-      "Total private memory use is %lu"
-      " bytes.\n",
-      increment, internal_size_);
+      (chunk_size_ * stash_chunks_ * number_of_buckets_), internal_size_);
 }
 
 CleanerUpper::CleanerUpper(size_t number_of_items, size_t number_of_buckets,
                            size_t chunk_size, size_t stash_chunks,
                            size_t clean_up_window,
-                           crypto::ShuffleCrypter* crypter)
-    : number_of_items_(number_of_items),
+                           crypto::ShuffleCrypter* crypter,
+                           AppendOnlyByteRegion* region)
+    : size_t_allocator_(region),
+      number_of_items_(number_of_items),
       number_of_buckets_(number_of_buckets),
       chunk_size_(chunk_size),
       stash_chunks_(stash_chunks),
@@ -337,20 +331,18 @@ CleanerUpper::CleanerUpper(size_t number_of_items, size_t number_of_buckets,
                                 chunk_size_),
       number_of_intermediate_items_(intermediate_bucket_size_ *
                                     number_of_buckets_),
-      window_(intermediate_bucket_size_ * clean_up_window_),
-      shuffle_array_(intermediate_bucket_size_),
+      window_(intermediate_bucket_size_ * clean_up_window_, region),
+      shuffle_array_(intermediate_bucket_size_, 0, size_t_allocator_),
       crypter_(crypter),
       drain_queue_(intermediate_bucket_size_ * clean_up_window_,
-                   number_of_intermediate_items_),
+                   number_of_intermediate_items_, size_t_allocator_),
       drain_add_(0),
-      drain_next_(0) {
-  log_printf(LOG_INFO, "About to create a CleanerUpper\n");
-  internal_size_ = sizeof(CleanerUpper);
-  internal_size_ += window_.MemoryUse();
-  internal_size_ += shuffle_array_.size() * sizeof(size_t);  // shuffle_array_
-                                                             // contents
-  internal_size_ += drain_queue_.size() * sizeof(size_t);    // drain_queue_
-                                                             // contents
+      drain_next_(0),
+      internal_size_(sizeof(CleanerUpper) +  // inherent object size
+                     window_.MemoryUse() +   // sliding window size
+                     shuffle_array_.size() * sizeof(size_t) +
+                     drain_queue_.size() * sizeof(size_t)
+                     ) {
   log_printf(LOG_INFO,
              "Created the StashShuffler's CleanerUpper for %d"
              " items, split in %d buckets of maximum bucket size %d"
@@ -563,7 +555,8 @@ bool StashShuffler::Shuffle(
     const size_t stash_size, const size_t stash_chunks,
     const size_t clean_up_window, AnalyzerItem* const analyzer_items,
     IntermediateShufflerItem* const encrypted_intermediate_items,
-    size_t number_of_intermediate_shuffler_items) {
+    size_t number_of_intermediate_shuffler_items,
+    AppendOnlyByteRegion* region) {
   // Establish the buffers are outside
   if (sgx_is_outside_enclave(shuffler_items,
                              number_of_items * sizeof(ShufflerItem)) != 1) {
@@ -590,14 +583,15 @@ bool StashShuffler::Shuffle(
   }
 
   {
-    auto distributor =
-        std::unique_ptr<stash::BucketDistributor>(new stash::BucketDistributor(
-            number_of_items, number_of_buckets, chunk_size, stash_size,
-            stash_chunks, crypter_.get()));
-    log_printf(
-        LOG_INFO,
-        "Distributor was successfully constructed, so there is enough heap "
-        "to proceed.\n");
+    uint8_t* distributor_memory =
+        region->Allocate(sizeof(stash::BucketDistributor));
+    auto distributor = new (distributor_memory) stash::BucketDistributor(
+        number_of_items, number_of_buckets, chunk_size, stash_size,
+        stash_chunks, crypter_.get(), region);
+    log_printf(LOG_INFO,
+               "Distributor was successfully constructed, and %ld bytes of the "
+               "region are allocated.\n",
+               region->Allocated());
 
     if (!distributor->Distribute(shuffler_items,
                                  encrypted_intermediate_items)) {
@@ -606,12 +600,22 @@ bool StashShuffler::Shuffle(
     }
     log_printf(LOG_INFO, "Done distrubuting items\n");
   }
+
+  // Reset the allocator.
+  region->Reset();
+
   {
     log_printf(LOG_INFO, "Beginning the clean up.\n");
 
-    auto cleaner_upper = std::unique_ptr<stash::CleanerUpper>(
-        new stash::CleanerUpper(number_of_items, number_of_buckets, chunk_size,
-                                stash_chunks, clean_up_window, crypter_.get()));
+    uint8_t* cleaner_upper_memory =
+        region->Allocate(sizeof(stash::CleanerUpper));
+    auto cleaner_upper = new (cleaner_upper_memory) stash::CleanerUpper(
+        number_of_items, number_of_buckets, chunk_size, stash_chunks,
+        clean_up_window, crypter_.get(), region);
+    log_printf(LOG_INFO,
+               "CleanerUpper was successfully constructed, and %ld bytes of the"
+               "region are allocated.\n",
+               region->Allocated());
     if (!cleaner_upper->CleanUp(encrypted_intermediate_items, analyzer_items)) {
       log_printf(LOG_ERROR, "Couldn't clean up intermediate items.\n");
       return false;

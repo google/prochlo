@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include "stash_window.h"
+
+#include "append_only_allocator.h"
 #include "stash_stash.h"
 
 #include "Enclave.h"
@@ -21,9 +23,11 @@ namespace prochlo {
 namespace shuffler {
 namespace stash {
 
-Window::Window(size_t size)
-    : is_allocated_(size, false),  // All items are free
-      window_items_(size),
+Window::Window(size_t size, AppendOnlyByteRegion* region)
+    : uint8_allocator_(region),
+      window_item_allocator_(region),
+      is_allocated_(size, false, uint8_allocator_),
+      window_items_(size, WindowItem(), window_item_allocator_),
       size_(size),
       free_(0),
       allocated_(size),
@@ -38,11 +42,7 @@ Window::Window(size_t size)
   window_items_[0].previous = size_;
 
   internal_size_ = sizeof(Window);
-  internal_size_ += is_allocated_.size() * sizeof(bool);  // Supposedly this
-                                                          // only takes one
-                                                          // bit per element,
-                                                          // but this is a
-                                                          // rough estimate.
+  internal_size_ += is_allocated_.size() * sizeof(uint8_t);
   internal_size_ += window_items_.size() * sizeof(WindowItem);  // window_items_
                                                                 // contents.
   log_printf(LOG_INFO,
