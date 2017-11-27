@@ -613,8 +613,8 @@ bool StashShuffler::Shuffle(
         number_of_items, number_of_buckets, chunk_size, stash_chunks,
         clean_up_window, crypter_.get(), region);
     log_printf(LOG_INFO,
-               "CleanerUpper was successfully constructed, and %ld bytes of the"
-               "region are allocated.\n",
+               "CleanerUpper was successfully constructed, and %ld bytes of "
+               "the region are allocated.\n",
                region->Allocated());
     if (!cleaner_upper->CleanUp(encrypted_intermediate_items, analyzer_items)) {
       log_printf(LOG_ERROR, "Couldn't clean up intermediate items.\n");
