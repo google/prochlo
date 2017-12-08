@@ -21,7 +21,7 @@ This directory demonstrates encrypted blindable crowd IDs for Prochlo, as
 described in Section 4.3 of the paper. At this point, this only contains the
 creation of a file of encrypted onions containing data and blindable crowd
 IDs. Subsequent updates of this codebase will also include the cryptography for
-blinding the encrypted blindable crowd IDs, and for decrypted the blinded crowd
+blinding the encrypted blindable crowd IDs, and for decrypting the blinded crowd
 IDs.
 
 The generator binary generates items to send to the Blinder (Shuffler 1). It
