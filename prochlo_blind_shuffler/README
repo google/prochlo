@@ -1,0 +1,44 @@
+##############################################
+# Encrypted Blindable Crowd IDs for Prochlo
+##############################################
+
+Disclaimer
+----------
+
+This is not an official Google product. It is a demonstration of the Stash
+Shuffle algorithm, described in
+
+Prochlo: Strong Privacy for Analytics in the Crowd, Andrea Bittau, Úlfar
+Erlingsson, Petros Maniatis, Ilya Mironov, Ananth Raghunathan, David Lie, Mitch
+Rudominer, Usharee Kode, Julien Tinnes, and Bernhard Seefeld. Symposium on
+Operating Systems Principles, 2017.
+
+
+Overview
+~~~~~~~~
+
+This directory demonstrates encrypted blindable crowd IDs for Prochlo, as
+described in Section 4.3 of the paper. At this point, this only contains the
+creation of a file of encrypted onions containing data and blindable crowd
+IDs. Subsequent updates of this codebase will also include the cryptography for
+blinding the encrypted blindable crowd IDs, and for decrypted the blinded crowd
+IDs.
+
+The generator binary generates items to send to the Blinder (Shuffler 1). It
+will subsequently blind the crowd IDs, shuffle them, and send them to the
+Thresholder (Shuffler 2), which will decrypt the blinded crowd IDs, shuffle the
+data again, and make them available to the Analyzer.
+
+To generate a test file at /tmp/testfile.dat with 5000 BlinderItems, using the
+key pairs for the Blinder, Thresholder, and Analyzer at etc/blinder.pub.pem,
+etc/thresholder.pub.pem, and etc/analyzer.pub.pem, respectively, invoke:
+
+# generator/generator -o /tmp/testfile.dat -B etc/blinder.pub.pem \
+#   -T etc/thresholder.pub.pem -A etc/analyzer.pub.pem -n 5000
+
+Note that the keys are generated when you
+
+# make
+
+Since the generated test file is dependent on the keys you used, you should save
+those keys along with the test file for further processing.
