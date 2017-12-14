@@ -19,15 +19,19 @@ Overview
 
 This directory demonstrates encrypted blindable crowd IDs for Prochlo, as
 described in Section 4.3 of the paper. At this point, this only contains the
-creation of a file of encrypted onions containing data and blindable crowd
-IDs. Subsequent updates of this codebase will also include the cryptography for
-blinding the encrypted blindable crowd IDs, and for decrypting the blinded crowd
-IDs.
+cryptographic primitives required, and two utility binaries demonstrating use.
 
-The generator binary generates items to send to the Blinder (Shuffler 1). It
-will subsequently blind the crowd IDs, shuffle them, and send them to the
-Thresholder (Shuffler 2), which will decrypt the blinded crowd IDs, shuffle the
-data again, and make them available to the Analyzer.
+The generator binary (under generator/) generates items to send to the Blinder
+(Shuffler 1). Those are triple-nested cryptographic onions, in which the outer
+layer contains an encrypted, blindable crowd ID, instead of a crowd ID in the
+clear. The Blinder would subsequently peel the outer layer of cryptography,
+blind the crowd IDs, re-encrypt them for the second shuffler, shuffle them, and
+send them on. The Thresholder (Shuffler 2) would then remove the crypto by the
+Blinder, decrypt the blinded crowd IDs, threshold the data by crowd ID, shuffle
+them again removing another layer of onion cryptography, and send the data to
+the Analyzer. OnionStructure.pdf shows the ESA cryptographic onion in the
+baseline case, as well as the corresponding onion for encrypted blindable crowd
+IDs, as well as the stages of blinding and decryption.
 
 To generate a test file at /tmp/testfile.dat with 5000 BlinderItems, using the
 key pairs for the Blinder, Thresholder, and Analyzer at etc/blinder.pub.pem,
@@ -42,3 +46,12 @@ Note that the keys are generated when you
 
 Since the generated test file is dependent on the keys you used, you should save
 those keys along with the test file for further processing.
+
+The test binary (under test/) checks that the crypto works as intended. It
+creates a blindable encrypted crowd ID, it then attempts to blind it with a
+trivial blinding secret (the number 1), decrypts it, and checks that the number
+encrypted, blinded, and decrypted is the same. A subsequent release will also
+demonstrate that blinded decrypted values are different.
+
+To run the tests, invoke:
+# test/test

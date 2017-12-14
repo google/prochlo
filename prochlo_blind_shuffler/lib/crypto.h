@@ -17,6 +17,7 @@
 
 #include <memory>
 
+#include <openssl/bn.h>
 #include <openssl/evp.h>
 #include <openssl/ec.h>
 
@@ -53,6 +54,29 @@ class Crypto {
   // bytes. Returns true on success and false otherwise.
   bool EncryptBlindableCrowdId(const uint8_t* crowd_id,
                                EncryptedBlindableCrowdId* encrypted_crowd_id);
+
+  // Similar to the other EncryptBlindableCrowdId function, but it takes an
+  // explicit peer key, and also returns the (serialized) hash. This is
+  // primarily meant for testing. In addition to the restrictions for the other
+  // function, this also requires |peer_key| not to be NULL, the pointed-to key
+  // to be a valid key pair in the same algorithm, and an initialized buffer
+  // long enough to hold a serialized EC_POINT in |hash_buffer|.
+  bool EncryptBlindableCrowdId(const uint8_t* crowd_id, EVP_PKEY* peer_key,
+                               EncryptedBlindableCrowdId* encrypted_crowd_id,
+                               uint8_t* hash_buffer);
+
+  // Blind a the blindable encrypted crowd ID in |*encrypted_crowd_id|, using
+  // the secret random number |alpha|. |encrypted_crowd_id| may not be NULL.
+  bool BlindEncryptedBlindableCrowdId(
+      EncryptedBlindableCrowdId* encrypted_crowd_id, const BIGNUM& alpha);
+
+  // Decrypt the blinded crowd ID from |*encrypted_blinded_crowd_id| using the
+  // private exponent |private_key| and store it in the buffer
+  // |*blinded_crowd_id|. |blinded_crowd_id| cannot be NULL, and must point to
+  // at least |kP256pointlength| bytes.
+  bool DecryptBlindedCrowdId(
+      EncryptedBlindableCrowdId* encrypted_blinded_crowd_id,
+      const BIGNUM& private_key, uint8_t* blinded_crowd_id);
 
  private:
   // A convenient interface for encrypting between pairs of Prochlo messages
@@ -152,13 +176,56 @@ class Crypto {
     // All EC_POINT structures must have been initialized a not NULL.
     bool EncryptBlindable(EVP_PKEY* peer_key);
 
-    // Write out the state to |*encrypted_crowd_id|. |encrypted_crowd_id| may
-    // not be NULL.
-    bool Serialize(EncryptedBlindableCrowdId* encrypted_crowd_id);
+    // Write out the blindable state to
+    // |*encrypted_crowd_id|. |encrypted_crowd_id| may not be NULL.
+    bool SerializeBlindable(EncryptedBlindableCrowdId* encrypted_crowd_id);
+
+    // Write out the blinded state to
+    // |*encrypted_crowd_id|. |encrypted_crowd_id| may not be NULL.
+    bool SerializeBlinded(EncryptedBlindableCrowdId* encrypted_crowd_id);
+
+    // Serialize the given points to
+    // |*encrypted_crowd_id|. |encrypted_crowd_id| may not be NULL.
+    bool SerializeInternal(const EC_POINT& public_portion,
+                           const EC_POINT& secret_portion,
+                           EncryptedBlindableCrowdId* encrypted_crowd_id);
+
+    // Serialize the decrypted blinded EC_POINT to the given buffer. |buffer|
+    // may not be null point to a buffer of at least |kP256pointlength| bytes.
+    bool SerializeDecrypted(uint8_t* buffer);
+
+    // Serialize the EC hash to the given buffer. |buffer| may not be null point
+    // to a buffer of at least |kP256pointlength| bytes.
+    bool SerializeHash(uint8_t* buffer);
+
+    // Read in state from the structure. Fails if either of the serialized
+    // EC_POINTs are invalid.
+    bool DeserializeBlindable(
+        const EncryptedBlindableCrowdId& encrypted_crowd_id);
+
+    // Read in state from the structure. Fails if either of the serialized
+    // EC_POINTs are invalid.
+    bool DeserializeBlinded(
+        const EncryptedBlindableCrowdId& encrypted_crowd_id);
+
+    // Read in state from the structure. Both provided pointers to EC_POINTs is
+    // NULL.
+    bool DeserializeInternal(
+        const EncryptedBlindableCrowdId& encrypted_crowd_id,
+        EC_POINT* public_portion, EC_POINT* secret_portion);
+
+    // Blind the public and secret portions of blindable encryption with the
+    // given exponent |alpha|. Blinding is done in place, updating
+    // |public_point_| and |secret_point_|.
+    bool Blind(const BIGNUM& alpha);
+
+    // Decrypt the encrypted blindable state with the given |private_key|, and
+    // store the result locally in |decrypted_blinded_point_|.
+    bool Decrypt(const BIGNUM& private_key);
 
     // Reset the state for another computation. Primarily, this frees the
     // ephemeral key pair.
-    void Reset();
+    void ResetEncryption();
 
     // My containing crypto class.
     Crypto* crypto_;
@@ -180,6 +247,25 @@ class Crypto {
 
     // h^r * m
     EC_POINT* h_to_the_r_times_m_;
+
+    // Public portion, presumably a g^r
+    EC_POINT* public_point_;
+
+    // Secret portion, presumably a h^r*m
+    EC_POINT* secret_point_;
+
+    // Blinded public portion, presumably a g^ra
+    EC_POINT* blinded_public_point_;
+
+    // Blinded secret portion, presumably a h^ra*m
+    EC_POINT* blinded_secret_point_;
+
+    // g^rax
+    EC_POINT* g_to_the_r_a_x_;
+
+    // Decrypted blinded point, the proxy crowd ID on which the thresholder can
+    // now threshold.
+    EC_POINT* decrypted_blinded_point_;
   };
 
   bool MakeEncryptedMessage(Encryption* encryption);

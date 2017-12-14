@@ -188,8 +188,17 @@ constexpr size_t kThresholderItemLength = sizeof(ThresholderItem);
 
 constexpr size_t kP256PointLength = 33;
 struct EncryptedBlindableCrowdId{
-  uint8_t g_to_the_r[kP256PointLength];
-  uint8_t h_to_the_r_times_m[kP256PointLength];
+  // Public part. When blindable but not yet blinded, it starts out as Generator
+  // ^ ClientPrivateKey. We also call this g^r in the code. When blinded, it
+  // becomes Generator ^ (ClientPrivateKey * BlinderRandom), also called g^ra.
+  uint8_t public_portion[kP256PointLength];
+
+  // Secret part. When blindable but not yet blinded, it starts out as
+  // (ThresholderPublicKey ^ ClientPrivateKey) * ECHashOfCrowdID. We also call
+  // this h^r*m in the code. When blinded, it becomes ((ThresholderPublicKey ^
+  // ClientPrivateKey) * ECHashOfCrowdID) ^ BlinderRandom, also called
+  // (h^r*m)^a.
+  uint8_t secret_portion[kP256PointLength];
 };
 constexpr size_t kEncryptedBlindableCrowdIdLength =
     sizeof(EncryptedBlindableCrowdId);

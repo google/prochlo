@@ -6,11 +6,12 @@ export LIBPROCHLO = $(TOP)/lib/libprochlo.a
 
 SUBDIRS = lib \
 	  generator \
+	  test \
 	  etc
 
 SUBCLEAN = $(addsuffix .clean,$(SUBDIRS))
 
-.PHONY: all clean $(SUBDIRS) $(SUBCLEAN) test
+.PHONY: all clean $(SUBDIRS) $(SUBCLEAN) 
 all: $(SUBDIRS)
 
 $(SUBDIRS):

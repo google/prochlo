@@ -16,6 +16,8 @@
 #include <dirent.h>
 #include <err.h>
 #include <fcntl.h>
+#include <openssl/bn.h>
+#include <openssl/ec.h>
 #include <openssl/ecdh.h>
 #include <openssl/err.h>
 #include <openssl/hmac.h>
@@ -230,7 +232,7 @@ bool Crypto::PlainBlinderItemToBlinderItemEncryption::StreamDataForEncryption(
   // And now finish with the encoded crowd ID
   next_byte = &blinder_item->ciphertext[ciphertext_byte_count];
   const uint8_t* to_encoded_crowd_id_g_to_the_r =
-      plain_blinder_item.encoded_crowd_id.g_to_the_r;
+      plain_blinder_item.encoded_crowd_id.public_portion;
   if (EVP_EncryptUpdate(ctx, next_byte, &out_length, to_encoded_crowd_id_g_to_the_r,
                         kP256PointLength) != 1) {
     warn("Couldn't encrypt encoded crowd ID public part with AES128-GCM.");
@@ -240,7 +242,7 @@ bool Crypto::PlainBlinderItemToBlinderItemEncryption::StreamDataForEncryption(
   ciphertext_byte_count += out_length;
   next_byte = &blinder_item->ciphertext[ciphertext_byte_count];
   const uint8_t* to_encoded_crowd_id_h_to_the_r_times_m =
-      plain_blinder_item.encoded_crowd_id.h_to_the_r_times_m;
+      plain_blinder_item.encoded_crowd_id.secret_portion;
   if (EVP_EncryptUpdate(ctx, next_byte, &out_length,
                         to_encoded_crowd_id_h_to_the_r_times_m,
                         kP256PointLength) != 1) {
@@ -399,6 +401,9 @@ bool Crypto::EncryptForThresholder(
 
 bool Crypto::EncryptBlindableCrowdId(
     const uint8_t* crowd_id, EncryptedBlindableCrowdId* encrypted_crowd_id) {
+  assert(crowd_id != nullptr);
+  assert(encrypted_crowd_id != nullptr);
+
   // Hash the crowd ID on the curve
   if (!blindable_encryption_.HashToCurve(crowd_id, kCrowdIdLength)) {
     warn("Failed to hash crowd ID to P256 curve.");
@@ -412,13 +417,99 @@ bool Crypto::EncryptBlindableCrowdId(
   }
 
   // Serialize the crowd ID to the supplied structure.
-  if (!blindable_encryption_.Serialize(encrypted_crowd_id)) {
+  if (!blindable_encryption_.SerializeBlindable(encrypted_crowd_id)) {
     warn("Failed to serialize encrypted blindable crowd ID.");
     return false;
   }
 
   // And reset the state of the context
-  blindable_encryption_.Reset();
+  blindable_encryption_.ResetEncryption();
+
+  return true;
+}
+
+bool Crypto::EncryptBlindableCrowdId(
+    const uint8_t* crowd_id, EVP_PKEY* peer_key,
+    EncryptedBlindableCrowdId* encrypted_crowd_id, uint8_t* hash_buffer) {
+  assert(peer_key != nullptr);
+  assert(crowd_id != nullptr);
+  assert(hash_buffer != nullptr);
+  assert(encrypted_crowd_id != nullptr);
+
+  // Hash the crowd ID on the curve
+  if (!blindable_encryption_.HashToCurve(crowd_id, kCrowdIdLength)) {
+    warn("Failed to hash crowd ID to P256 curve.");
+    return false;
+  }
+  if (!blindable_encryption_.SerializeHash(hash_buffer)) {
+    warn("Failed to serialized the EC hash.");
+    return false;
+  }
+
+  // Encrypt the hashed crowd ID
+  if (!blindable_encryption_.EncryptBlindable(peer_key)) {
+    warn("Failed to encrypt hashed crowd ID.");
+    return false;
+  }
+
+  // Serialize the crowd ID to the supplied structure.
+  if (!blindable_encryption_.SerializeBlindable(encrypted_crowd_id)) {
+    warn("Failed to serialize encrypted blindable crowd ID.");
+    return false;
+  }
+
+  // Don't reset the state of the context during testing. Let it be done
+  // explicitly.
+
+  return true;
+}
+
+bool Crypto::BlindEncryptedBlindableCrowdId(
+    EncryptedBlindableCrowdId* encrypted_crowd_id, const BIGNUM& alpha) {
+  // Deserialize the crowd ID to the supplied structure.
+  if (!blindable_encryption_.DeserializeBlindable(*encrypted_crowd_id)) {
+    warn("Failed to deserialize encrypted blindable crowd ID.");
+    return false;
+  }
+
+  // Blind
+  if (!blindable_encryption_.Blind(alpha)) {
+    warn("Failed to blind a clindable crowd ID.");
+    return false;
+  }
+
+  // Serialize the blinded crowd ID to the same supplied structure.
+  if (!blindable_encryption_.SerializeBlinded(encrypted_crowd_id)) {
+    warn("Failed to serialize encrypted blinded crowd ID.");
+    return false;
+  }
+
+  return true;
+}
+
+bool Crypto::DecryptBlindedCrowdId(
+    EncryptedBlindableCrowdId* encrypted_blinded_crowd_id,
+    const BIGNUM& private_key, uint8_t* blinded_crowd_id) {
+  assert(encrypted_blinded_crowd_id != nullptr);
+  assert(blinded_crowd_id != nullptr);
+
+  // Serialize the blinded crowd ID
+  if (!blindable_encryption_.DeserializeBlinded(*encrypted_blinded_crowd_id)) {
+    warn("Failed to deserialize encrypted blinded crowd ID.");
+    return false;
+  }
+
+  // Decrypt item
+  if (!blindable_encryption_.Decrypt(private_key)) {
+    warn("Failed to decrypt encrypted blinded crowd ID.");
+    return false;
+  }
+
+  // Serialize the decrypted, blinded EC_POINT
+  if (!blindable_encryption_.SerializeDecrypted(blinded_crowd_id)) {
+    warn("Failed to serialize the decrypted blinded crowd ID.");
+    return false;
+  }
 
   return true;
 }
@@ -734,6 +825,8 @@ bool Crypto::BlindableEncryption::EncryptBlindable(EVP_PKEY* peer_key) {
                    EC_KEY_get0_private_key(
                        EVP_PKEY_get0_EC_KEY(my_ephemeral_key_)),  // r
                    nullptr /* bn_ctx= */) != 1) {
+    warn("Couldn't compute h^r.");
+    ERR_print_errors_fp(stderr);
     EVP_PKEY_free(my_ephemeral_key_);
     my_ephemeral_key_ = nullptr;
     return false;
@@ -743,6 +836,8 @@ bool Crypto::BlindableEncryption::EncryptBlindable(EVP_PKEY* peer_key) {
   if (EC_POINT_add(p256_,
                    h_to_the_r_times_m_,  // output
                    h_to_the_r_, hash_, nullptr /* bn_ctx= */) != 1) {
+    warn("Couldn't multiple h^r to m.");
+    ERR_print_errors_fp(stderr);
     EVP_PKEY_free(my_ephemeral_key_);
     my_ephemeral_key_ = nullptr;
     return false;
@@ -753,36 +848,199 @@ bool Crypto::BlindableEncryption::EncryptBlindable(EVP_PKEY* peer_key) {
   return true;
 }
 
-bool Crypto::BlindableEncryption::Serialize(
+bool Crypto::BlindableEncryption::SerializeBlindable(
     EncryptedBlindableCrowdId* encrypted_crowd_id) {
   assert(my_ephemeral_key_ != nullptr);
   assert(h_to_the_r_times_m_ != nullptr);
 
+  return SerializeInternal(
+      *EC_KEY_get0_public_key(EVP_PKEY_get0_EC_KEY(my_ephemeral_key_)),
+      *h_to_the_r_times_m_, encrypted_crowd_id);
+}
+
+bool Crypto::BlindableEncryption::SerializeBlinded(
+    EncryptedBlindableCrowdId* encrypted_crowd_id) {
+  assert(blinded_public_point_ != nullptr);
+  assert(blinded_secret_point_ != nullptr);
+
+  return SerializeInternal(*blinded_public_point_, *blinded_secret_point_,
+                           encrypted_crowd_id);
+}
+
+bool Crypto::BlindableEncryption::SerializeInternal(
+    const EC_POINT& public_portion, const EC_POINT& secret_portion,
+    EncryptedBlindableCrowdId* encrypted_crowd_id) {
   unsigned int required_length = EC_POINT_point2oct(
-      p256_, h_to_the_r_times_m_, POINT_CONVERSION_COMPRESSED,
+      p256_, &secret_portion, POINT_CONVERSION_COMPRESSED,
       nullptr /* out buffer */, kP256PointLength, nullptr /* bn_ctx= */);
   if (required_length > kP256PointLength) {
     return false;
   }
-  if (EC_POINT_point2oct(
-      p256_, h_to_the_r_times_m_, POINT_CONVERSION_COMPRESSED,
-      encrypted_crowd_id->h_to_the_r_times_m, kP256PointLength,
-      nullptr /* bn_ctx= */) == 0) {
+  if (EC_POINT_point2oct(p256_, &secret_portion, POINT_CONVERSION_COMPRESSED,
+                         encrypted_crowd_id->secret_portion, kP256PointLength,
+                         nullptr /* bn_ctx= */) == 0) {
+    warn("Couldn't serialize secret portion of crowd ID.");
+    ERR_print_errors_fp(stderr);
     return false;
   }
 
   required_length = EC_POINT_point2oct(
-      p256_, EC_KEY_get0_public_key(EVP_PKEY_get0_EC_KEY(my_ephemeral_key_)),
-      POINT_CONVERSION_COMPRESSED, nullptr /* out buffer */, kP256PointLength,
-      nullptr /* bn_ctx= */);
+      p256_, &public_portion, POINT_CONVERSION_COMPRESSED,
+      nullptr /* out buffer */, kP256PointLength, nullptr /* bn_ctx= */);
   if (required_length > kP256PointLength) {
     return false;
   }
-  if (EC_POINT_point2oct(
-          p256_,
-          EC_KEY_get0_public_key(EVP_PKEY_get0_EC_KEY(my_ephemeral_key_)),
-          POINT_CONVERSION_COMPRESSED, encrypted_crowd_id->g_to_the_r,
-          kP256PointLength, nullptr /* bn_ctx= */) == 0) {
+  if (EC_POINT_point2oct(p256_, &public_portion, POINT_CONVERSION_COMPRESSED,
+                         encrypted_crowd_id->public_portion, kP256PointLength,
+                         nullptr /* bn_ctx= */) == 0) {
+    warn("Couldn't serialize public portion of crowd ID.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+  return true;
+}
+
+bool Crypto::BlindableEncryption::SerializeDecrypted(uint8_t* buffer) {
+  assert(buffer != nullptr);
+  assert(p256_ != nullptr);
+  assert(decrypted_blinded_point_ != nullptr);
+
+  if (EC_POINT_point2oct(p256_, decrypted_blinded_point_,
+                         POINT_CONVERSION_COMPRESSED, buffer, kP256PointLength,
+                         nullptr /* bn_ctx= */) == 0) {
+    warn("Couldn't serialize the decrypted blinded point.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+
+  return true;
+}
+
+bool Crypto::BlindableEncryption::SerializeHash(uint8_t* buffer) {
+  assert(buffer != nullptr);
+  assert(p256_ != nullptr);
+  assert(hash_ != nullptr);
+
+  if (EC_POINT_point2oct(p256_, hash_, POINT_CONVERSION_COMPRESSED, buffer,
+                         kP256PointLength, nullptr /* bn_ctx= */) == 0) {
+    warn("Couldn't serialize the EC hash point.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+
+  return true;
+}
+
+bool Crypto::BlindableEncryption::DeserializeBlindable(
+    const EncryptedBlindableCrowdId& encrypted_crowd_id) {
+  assert(public_point_ != nullptr);
+  assert(secret_point_ != nullptr);
+
+  bool status =
+      DeserializeInternal(encrypted_crowd_id, public_point_, secret_point_);
+
+  return status;
+}
+
+bool Crypto::BlindableEncryption::DeserializeBlinded(
+    const EncryptedBlindableCrowdId& blinded_encrypted_crowd_id) {
+  assert(blinded_public_point_ != nullptr);
+  assert(blinded_secret_point_ != nullptr);
+
+  return DeserializeInternal(blinded_encrypted_crowd_id, blinded_public_point_,
+                             blinded_secret_point_);
+}
+
+bool Crypto::BlindableEncryption::DeserializeInternal(
+    const EncryptedBlindableCrowdId& encrypted_crowd_id,
+    EC_POINT* public_portion, EC_POINT* secret_portion) {
+  assert(public_portion != nullptr);
+  assert(secret_portion != nullptr);
+  assert(p256_ != nullptr);
+
+  if (EC_POINT_oct2point(p256_, public_portion,
+                         encrypted_crowd_id.public_portion, kP256PointLength,
+                         nullptr /* bn_ctx= */) == 0) {
+    warn(
+        "Could not deserialize public portion of encrypted blindable crowd"
+        " ID.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+
+  if (EC_POINT_oct2point(p256_, secret_portion,
+                         encrypted_crowd_id.secret_portion, kP256PointLength,
+                         nullptr /* bn_ctx= */) == 0) {
+    warn(
+        "Could not deserialize secret portion of encrypted blindable crowd"
+        "ID.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+
+  return true;
+}
+
+bool Crypto::BlindableEncryption::Blind(const BIGNUM& alpha) {
+  assert(public_point_ != nullptr);
+  assert(secret_point_ != nullptr);
+  assert(blinded_public_point_ != nullptr);
+  assert(blinded_secret_point_ != nullptr);
+  assert(p256_ != nullptr);
+
+  if (EC_POINT_mul(p256_, blinded_public_point_ /* result */,
+                   NULL /* no generator exponent */, public_point_, &alpha,
+                   nullptr /* bn_ctx= */) != 1) {
+    warn(
+        "Could not blind public portion of encrypted blindable crowd"
+        "ID.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+
+  if (EC_POINT_mul(p256_, blinded_secret_point_ /* result */,
+                   NULL /* no generator exponent */, secret_point_, &alpha,
+                   nullptr /* bn_ctx= */) != 1) {
+    warn(
+        "Could not blind secret portion of encrypted blindable crowd"
+        "ID.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+
+  return true;
+}
+
+bool Crypto::BlindableEncryption::Decrypt(const BIGNUM& private_key) {
+  assert(p256_ != nullptr);
+  assert(blinded_public_point_ != nullptr);
+  assert(blinded_secret_point_ != nullptr);
+  assert(g_to_the_r_a_x_ != nullptr);
+  assert(decrypted_blinded_point_ != nullptr);
+
+  if (EC_POINT_mul(p256_, g_to_the_r_a_x_,
+                   nullptr,  // no generator exponent
+                   blinded_public_point_, &private_key,
+                   nullptr /* bn_ctx= */) != 1) {
+    warn(
+        "Could not raise the public portion of the blinded crowd ID to the "
+        "private key.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+
+  if (EC_POINT_invert(p256_, g_to_the_r_a_x_, nullptr /* bn_ctx= */) != 1) {
+    warn("Could not invert the raised public portion of the blinded crowd ID.");
+    ERR_print_errors_fp(stderr);
+    return false;
+  }
+
+  if (EC_POINT_add(p256_, decrypted_blinded_point_, g_to_the_r_a_x_,
+                   blinded_secret_point_, nullptr /* bn_ctx= */) != 1) {
+    warn(
+        "Could not multiple inverted raised public portion with secret "
+        "portion.");
+    ERR_print_errors_fp(stderr);
     return false;
   }
 
@@ -796,13 +1054,25 @@ Crypto::BlindableEncryption::BlindableEncryption(Crypto* crypto)
       x_coordinate_(BN_new()),
       my_ephemeral_key_(nullptr),
       h_to_the_r_(EC_POINT_new(p256_)),
-      h_to_the_r_times_m_(EC_POINT_new(p256_)) {
+      h_to_the_r_times_m_(EC_POINT_new(p256_)),
+      public_point_(EC_POINT_new(p256_)),
+      secret_point_(EC_POINT_new(p256_)),
+      blinded_public_point_(EC_POINT_new(p256_)),
+      blinded_secret_point_(EC_POINT_new(p256_)),
+      g_to_the_r_a_x_(EC_POINT_new(p256_)),
+      decrypted_blinded_point_(EC_POINT_new(p256_)) {
   assert(crypto_ != nullptr);
   assert(p256_ != nullptr);
   assert(hash_ != nullptr);
   assert(x_coordinate_ != nullptr);
   assert(h_to_the_r_ != nullptr);
   assert(h_to_the_r_times_m_ != nullptr);
+  assert(public_point_ != nullptr);
+  assert(secret_point_ != nullptr);
+  assert(blinded_public_point_ != nullptr);
+  assert(blinded_secret_point_ != nullptr);
+  assert(g_to_the_r_a_x_ != nullptr);
+  assert(decrypted_blinded_point_ != nullptr);
 }
 
 Crypto::BlindableEncryption::~BlindableEncryption() {
@@ -824,9 +1094,27 @@ Crypto::BlindableEncryption::~BlindableEncryption() {
   if (h_to_the_r_times_m_ != nullptr) {
     EC_POINT_free(h_to_the_r_times_m_);
   }
+  if (public_point_ != nullptr) {
+    EC_POINT_free(public_point_);
+  }
+  if (secret_point_ != nullptr) {
+    EC_POINT_free(secret_point_);
+  }
+  if (blinded_public_point_ != nullptr) {
+    EC_POINT_free(blinded_public_point_);
+  }
+  if (blinded_secret_point_ != nullptr) {
+    EC_POINT_free(blinded_secret_point_);
+  }
+  if (g_to_the_r_a_x_ != nullptr) {
+    EC_POINT_free(g_to_the_r_a_x_);
+  }
+  if (decrypted_blinded_point_ != nullptr) {
+    EC_POINT_free(decrypted_blinded_point_);
+  }
 }
 
-void Crypto::BlindableEncryption::Reset() {
+void Crypto::BlindableEncryption::ResetEncryption() {
   if (my_ephemeral_key_ != nullptr) {
     EVP_PKEY_free(my_ephemeral_key_);
     my_ephemeral_key_ = nullptr;
